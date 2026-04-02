@@ -2,17 +2,16 @@ import streamlit as st
 import pandas as pd
 import requests
 import urllib.parse
-import urllib.request
-import re
 import os
 import time
 import random
 from datetime import datetime
 
-# ==========================================
-# 1. API CONFIG & INITIALIZATION
-# ==========================================
-TMDB_API_KEY = "e8b0c5c461c6e0357a1de99efdb1595b"
+try:
+    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+except Exception:
+    TMDB_API_KEY = "e8b0c5c461c6e0357a1de99efdb1595b" 
+
 BASE_URL = "https://api.tmdb.org/3"
 
 st.set_page_config(page_title="StreamSense AI", page_icon="🍿", layout="wide")
@@ -20,15 +19,21 @@ st.set_page_config(page_title="StreamSense AI", page_icon="🍿", layout="wide")
 try:
     from ytmusicapi import YTMusic
     @st.cache_resource
-    def init_ytmusic(): return YTMusic(location="IN", language="hi")
+    def init_ytmusic(): 
+        try:
+            if os.path.exists("oauth.json"):
+                return YTMusic("oauth.json")
+            else:
+                return YTMusic(location="IN", language="hi")
+        except Exception as e:
+            print(f"YTMusic Init Error: {e}")
+            return YTMusic(location="IN", language="hi")
+            
     ytmusic = init_ytmusic()
-except:
-    st.error("Terminal: pip install ytmusicapi")
+except Exception as e:
+    st.error("Terminal me chalao: pip install ytmusicapi")
     st.stop()
 
-# ==========================================
-# 2. CINEMATIC LOADING SCREEN
-# ==========================================
 if 'splash_shown' not in st.session_state:
     splash = st.empty()
     splash.markdown("""
@@ -45,9 +50,6 @@ if 'splash_shown' not in st.session_state:
     splash.empty()
     st.session_state.splash_shown = True
 
-# ==========================================
-# 3. PREMIUM UI CSS (GLASSMORPHISM)
-# ==========================================
 st.markdown("""
     <style>
     .stApp { background-color: #0a0a0a; color: white; }
@@ -82,9 +84,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# ==========================================
-# 4. API HELPER FUNCTIONS
-# ==========================================
 def get_ott_info(item_id, m_type, title):
     try:
         res = requests.get(f"{BASE_URL}/{m_type}/{item_id}/watch/providers?api_key={TMDB_API_KEY}").json()
@@ -99,7 +98,24 @@ def get_ott_info(item_id, m_type, title):
             if "netflix" in top: link, btn_txt = f"https://www.netflix.com/search?q={safe_t}", "ON NETFLIX"
             elif "prime" in top: link, btn_txt = f"https://www.primevideo.com/search?phrase={safe_t}", "ON PRIME"
         return logos, link, btn_txt
-    except: return [], "#", "CHECK OTT"
+    except Exception as e: 
+        print(f"OTT API Error: {e}")
+        return [], "#", "CHECK OTT"
+
+def get_tmdb_trailer(item_id, m_type):
+    try:
+        res = requests.get(f"{BASE_URL}/{m_type}/{item_id}/videos?api_key={TMDB_API_KEY}").json()
+        videos = res.get('results', [])
+        for vid in videos:
+            if vid.get('type') == 'Trailer' and vid.get('site') == 'YouTube':
+                return vid.get('key')
+        for vid in videos:
+            if vid.get('site') == 'YouTube':
+                return vid.get('key')
+        return None
+    except Exception as e:
+        print(f"Trailer API Error: {e}")
+        return None
 
 @st.cache_data(show_spinner=False)
 def fetch_yt_music(query):
@@ -116,11 +132,10 @@ def fetch_yt_music(query):
                     'videoId': vid_id
                 })
         return formatted
-    except: return []
+    except Exception as e: 
+        print(f"YTMusic Fetch Error: {e}")
+        return []
 
-# ==========================================
-# 5. SIDEBAR
-# ==========================================
 with st.sidebar:
     st.markdown("<h2 style='color:#E50914; font-weight:900;'>STREAMSENSE</h2>", unsafe_allow_html=True)
     st.markdown("---")
@@ -132,9 +147,6 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div style="font-size:12px; color:#666; position: fixed; bottom: 20px;">Developed by Abhimanyu & Team</div>', unsafe_allow_html=True)
 
-# ==========================================
-# 6. MAIN LOGIC
-# ==========================================
 if 'movie_res' not in st.session_state: st.session_state.movie_res = []
 if 'music_res' not in st.session_state: st.session_state.music_res = []
 
@@ -159,12 +171,10 @@ if menu in ["🎥 Movies", "📺 Web Series"]:
             s_res = requests.get(f"{BASE_URL}/search/{m_type}?api_key={TMDB_API_KEY}&query={smart_q}").json().get('results', [])
             if s_res:
                 recos = requests.get(f"{BASE_URL}/{m_type}/{s_res[0]['id']}/recommendations?api_key={TMDB_API_KEY}").json().get('results', [])
-                # Smart Filter: Sirf quality data aur 2026 compatible
                 temp_res = [m for m in recos if m.get('vote_average', 0) > 0 and m.get('poster_path')]
         elif normal_q:
             temp_res = requests.get(f"{BASE_URL}/search/{m_type}?api_key={TMDB_API_KEY}&query={normal_q}").json().get('results', [])
         else:
-            # DYNAMIC ALGORITHM: Popularity + Page Shuffle (No date hard block)
             p = {
                 "api_key": TMDB_API_KEY, 
                 "sort_by": "popularity.desc", 
@@ -194,11 +204,14 @@ if menu in ["🎥 Movies", "📺 Web Series"]:
                 logos, link, b_txt = get_ott_info(item['id'], m_type, title)
                 
                 st.markdown(f'''<div class="reco-card"><img src="{img}" class="card-img"><h4>{title[:22]}</h4><p style="color:#E50914; font-weight:bold; margin-top:-10px;">⭐ {rating} | {year}</p><a href="{link}" target="_blank" class="ott-btn">{b_txt}</a></div>''', unsafe_allow_html=True)
+                
                 if st.button(f"WATCH TRAILER", key=f"mv_{item['id']}_{i}"):
-                    query = urllib.parse.quote(f"{title} official trailer {year}")
-                    res = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={query}")
-                    st.session_state.mv_vid = re.findall(r'"videoId":"(.{11})"', res.read().decode())[0]
-                    st.rerun()
+                    trailer_key = get_tmdb_trailer(item['id'], m_type)
+                    if trailer_key:
+                        st.session_state.mv_vid = trailer_key
+                        st.rerun()
+                    else:
+                        st.warning("Trailer currently unavailable.")
 
 elif menu == "🎵 Music Vibes":
     st.markdown("### 🎧 Discover Fresh Beats")
@@ -211,8 +224,11 @@ elif menu == "🎵 Music Vibes":
     if m_search or m_btn:
         q = m_search if m_search else f"{m_lang} {m_mood} hits 2026"
         music_data = fetch_yt_music(q)
-        random.shuffle(music_data)
-        st.session_state.music_res = music_data
+        if music_data:
+            random.shuffle(music_data)
+            st.session_state.music_res = music_data
+        else:
+            st.error("Music fetch fail! Please check your connection or update oauth.json.")
 
     if st.session_state.music_res:
         if 'ms_vid' not in st.session_state: st.session_state.ms_vid = None
