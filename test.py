@@ -20,7 +20,7 @@ st.set_page_config(page_title="StreamSense AI", page_icon="🍿", layout="wide")
 try:
     from ytmusicapi import YTMusic
     @st.cache_resource
-    def init_ytmusic(): return YTMusic()
+    def init_ytmusic(): return YTMusic(location="IN", language="hi")
     ytmusic = init_ytmusic()
 except:
     st.error("Terminal me chalao: pip install ytmusicapi")
