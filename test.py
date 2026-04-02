@@ -23,7 +23,7 @@ try:
     def init_ytmusic(): return YTMusic(location="IN", language="hi")
     ytmusic = init_ytmusic()
 except:
-    st.error("Terminal me chalao: pip install ytmusicapi")
+    st.error("Terminal: pip install ytmusicapi")
     st.stop()
 
 # ==========================================
