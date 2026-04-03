@@ -160,7 +160,7 @@ if menu in ["🎥 Movies", "📺 Web Series"]:
     with c1: lang = st.selectbox("🌐 Region", ["Global", "Hindi", "English", "Telugu"])
     with c2: genre_sel = st.selectbox("🎭 Genre", ["All", "Action", "Comedy", "Drama", "Sci-Fi"])
     with c3: sort_date = st.selectbox("📅 Sort Order", ["Latest First", "Old is Gold"])
-    with c4: st.write(""); apply_btn = st.button("Refresh ✨")
+    with c4: st.write(""); apply_btn = st.button("Top Picks▶️")
 
     if apply_btn or smart_q or normal_q:
         l_map = {"Global": "", "Hindi": "hi", "English": "en", "Telugu": "te"}
