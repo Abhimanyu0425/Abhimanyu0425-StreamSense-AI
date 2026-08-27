@@ -1,17 +1,16 @@
 import streamlit as st
-import pandas as pd
 import requests
 import urllib.parse
-import os
+import urllib.request
+import re
 import time
 import random
 from datetime import datetime
 
-try:
-    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
-except Exception:
-    TMDB_API_KEY = "e8b0c5c461c6e0357a1de99efdb1595b" 
-
+# ==========================================
+# 1. API CONFIG & INITIALIZATION
+# ==========================================
+TMDB_API_KEY = "e8b0c5c461c6e0357a1de99efdb1595b"
 BASE_URL = "https://api.tmdb.org/3"
 
 st.set_page_config(page_title="StreamSense AI", page_icon="🍿", layout="wide")
@@ -19,21 +18,15 @@ st.set_page_config(page_title="StreamSense AI", page_icon="🍿", layout="wide")
 try:
     from ytmusicapi import YTMusic
     @st.cache_resource
-    def init_ytmusic(): 
-        try:
-            if os.path.exists("oauth.json"):
-                return YTMusic("oauth.json")
-            else:
-                return YTMusic(location="IN", language="hi")
-        except Exception as e:
-            print(f"YTMusic Init Error: {e}")
-            return YTMusic(location="IN", language="hi")
-            
+    def init_ytmusic(): return YTMusic()
     ytmusic = init_ytmusic()
-except Exception as e:
+except:
     st.error("Terminal me chalao: pip install ytmusicapi")
     st.stop()
 
+# ==========================================
+# 2. CINEMATIC LOADING SCREEN
+# ==========================================
 if 'splash_shown' not in st.session_state:
     splash = st.empty()
     splash.markdown("""
@@ -50,6 +43,9 @@ if 'splash_shown' not in st.session_state:
     splash.empty()
     st.session_state.splash_shown = True
 
+# ==========================================
+# 3. PREMIUM UI CSS (GLASSMORPHISM)
+# ==========================================
 st.markdown("""
     <style>
     .stApp { background-color: #0a0a0a; color: white; }
@@ -84,12 +80,55 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# ==========================================
+# 4. DATA FETCHING ENGINES
+# ==========================================
+@st.cache_data(show_spinner=False, ttl=3600) # Cache for 1 hour to save API calls
+def fetch_tmdb_data(m_type, query, lang, genre_sel, sort_date):
+    l_map = {"Global": "", "Hindi": "hi", "English": "en", "Telugu": "te"}
+    g_map = {"All": "", "Action": 28, "Comedy": 35, "Drama": 18, "Sci-Fi": 878}
+    current_year = datetime.now().year
+    
+    try:
+        if query:
+            # MODE 1: IMDb Style Smart Search (Sorted by absolute popularity, filters junk)
+            safe_q = urllib.parse.quote(query)
+            res = requests.get(f"{BASE_URL}/search/{m_type}?api_key={TMDB_API_KEY}&query={safe_q}&include_adult=false").json()
+            valid = [m for m in res.get('results', []) if m.get('poster_path') and m.get('vote_count', 0) > 10]
+            return sorted(valid, key=lambda x: x.get('popularity', 0), reverse=True)[:12]
+        
+        else:
+            # MODE 2: Trending & Discovery Engine
+            if genre_sel == "All" and sort_date == "Latest First" and lang == "Global":
+                # Default Home Page: Global Trending This Week
+                res = requests.get(f"{BASE_URL}/trending/{m_type}/week?api_key={TMDB_API_KEY}").json()
+                return [m for m in res.get('results', []) if m.get('poster_path')][:12]
+            else:
+                # Custom Filtered Data
+                params = {
+                    "api_key": TMDB_API_KEY,
+                    "include_adult": "false",
+                    "with_original_language": l_map.get(lang, ""),
+                    "with_genres": g_map.get(genre_sel, "")
+                }
+                if sort_date == "Latest First":
+                    params["sort_by"] = "popularity.desc"
+                    params["primary_release_year"] if m_type == "movie" else params.setdefault("first_air_date_year", current_year)
+                    params["vote_count.gte"] = 5
+                else:
+                    params["sort_by"] = "vote_average.desc"
+                    params["vote_count.gte"] = 1500 # High threshold for classics
+                
+                res = requests.get(f"{BASE_URL}/discover/{m_type}", params=params).json()
+                return [m for m in res.get('results', []) if m.get('poster_path')][:12]
+    except:
+        return []
+
 def get_ott_info(item_id, m_type, title):
     try:
         res = requests.get(f"{BASE_URL}/{m_type}/{item_id}/watch/providers?api_key={TMDB_API_KEY}").json()
         india = res.get('results', {}).get('IN', {})
         providers = india.get('flatrate', []) + india.get('free', [])
-        logos = [f"https://image.tmdb.org/t/p/original{p['logo_path']}" for p in providers[:3]]
         link = india.get('link', "#")
         safe_t = urllib.parse.quote(title)
         btn_txt = "WATCH NOW ➔"
@@ -97,25 +136,8 @@ def get_ott_info(item_id, m_type, title):
             top = providers[0]['provider_name'].lower()
             if "netflix" in top: link, btn_txt = f"https://www.netflix.com/search?q={safe_t}", "ON NETFLIX"
             elif "prime" in top: link, btn_txt = f"https://www.primevideo.com/search?phrase={safe_t}", "ON PRIME"
-        return logos, link, btn_txt
-    except Exception as e: 
-        print(f"OTT API Error: {e}")
-        return [], "#", "CHECK OTT"
-
-def get_tmdb_trailer(item_id, m_type):
-    try:
-        res = requests.get(f"{BASE_URL}/{m_type}/{item_id}/videos?api_key={TMDB_API_KEY}").json()
-        videos = res.get('results', [])
-        for vid in videos:
-            if vid.get('type') == 'Trailer' and vid.get('site') == 'YouTube':
-                return vid.get('key')
-        for vid in videos:
-            if vid.get('site') == 'YouTube':
-                return vid.get('key')
-        return None
-    except Exception as e:
-        print(f"Trailer API Error: {e}")
-        return None
+        return [], link, btn_txt
+    except: return [], "#", "CHECK OTT"
 
 @st.cache_data(show_spinner=False)
 def fetch_yt_music(query):
@@ -132,10 +154,11 @@ def fetch_yt_music(query):
                     'videoId': vid_id
                 })
         return formatted
-    except Exception as e: 
-        print(f"YTMusic Fetch Error: {e}")
-        return []
+    except: return []
 
+# ==========================================
+# 5. SIDEBAR
+# ==========================================
 with st.sidebar:
     st.markdown("<h2 style='color:#E50914; font-weight:900;'>STREAMSENSE</h2>", unsafe_allow_html=True)
     st.markdown("---")
@@ -147,6 +170,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div style="font-size:12px; color:#666; position: fixed; bottom: 20px;">Developed by Abhimanyu & Team</div>', unsafe_allow_html=True)
 
+# ==========================================
+# 6. MAIN LOGIC
+# ==========================================
 if 'movie_res' not in st.session_state: st.session_state.movie_res = []
 if 'music_res' not in st.session_state: st.session_state.music_res = []
 
@@ -160,33 +186,12 @@ if menu in ["🎥 Movies", "📺 Web Series"]:
     with c1: lang = st.selectbox("🌐 Region", ["Global", "Hindi", "English", "Telugu"])
     with c2: genre_sel = st.selectbox("🎭 Genre", ["All", "Action", "Comedy", "Drama", "Sci-Fi"])
     with c3: sort_date = st.selectbox("📅 Sort Order", ["Latest First", "Old is Gold"])
-    with c4: st.write(""); apply_btn = st.button("Top Picks▶️")
+    with c4: st.write(""); apply_btn = st.button("Refresh ✨")
 
-    if apply_btn or smart_q or normal_q:
-        l_map = {"Global": "", "Hindi": "hi", "English": "en", "Telugu": "te"}
-        g_map = {"Action": 28, "Comedy": 35, "Drama": 18, "Sci-Fi": 878}
-        
-        temp_res = []
-        if smart_q:
-            s_res = requests.get(f"{BASE_URL}/search/{m_type}?api_key={TMDB_API_KEY}&query={smart_q}").json().get('results', [])
-            if s_res:
-                recos = requests.get(f"{BASE_URL}/{m_type}/{s_res[0]['id']}/recommendations?api_key={TMDB_API_KEY}").json().get('results', [])
-                temp_res = [m for m in recos if m.get('vote_average', 0) > 0 and m.get('poster_path')]
-        elif normal_q:
-            temp_res = requests.get(f"{BASE_URL}/search/{m_type}?api_key={TMDB_API_KEY}&query={normal_q}").json().get('results', [])
-        else:
-            p = {
-                "api_key": TMDB_API_KEY, 
-                "sort_by": "popularity.desc", 
-                "with_original_language": l_map[lang], 
-                "vote_count.gte": 5, 
-                "page": random.randint(1, 3) 
-            }
-            if genre_sel != "All": p["with_genres"] = g_map.get(genre_sel, "")
-            temp_res = requests.get(f"{BASE_URL}/discover/{m_type}", params=p).json().get('results', [])
-
-        final_list = [m for m in temp_res if m.get('poster_path')]
-        st.session_state.movie_res = sorted(final_list, key=lambda x: (x.get('release_date') or x.get('first_air_date') or "1900"), reverse=(sort_date=="Latest First"))
+    # AUTO-LOAD: Agar app pehli baar khuli hai ya Refresh dabaya hai
+    if apply_btn or smart_q or normal_q or not st.session_state.movie_res:
+        q = smart_q if smart_q else normal_q
+        st.session_state.movie_res = fetch_tmdb_data(m_type, q, lang, genre_sel, sort_date)
 
     if st.session_state.movie_res:
         if 'mv_vid' not in st.session_state: st.session_state.mv_vid = None
@@ -195,23 +200,20 @@ if menu in ["🎥 Movies", "📺 Web Series"]:
             if st.button("Close Player ✖️"): st.session_state.mv_vid = None; st.rerun()
 
         cols = st.columns(4)
-        for i, item in enumerate(st.session_state.movie_res[:12]):
+        for i, item in enumerate(st.session_state.movie_res):
             with cols[i % 4]:
                 title = item.get('title') or item.get('name')
                 rating = round(item.get("vote_average", 0), 1)
                 year = (item.get("release_date") or item.get("first_air_date") or "N/A")[:4]
                 img = f"https://image.tmdb.org/t/p/w500{item.get('poster_path')}"
-                logos, link, b_txt = get_ott_info(item['id'], m_type, title)
+                _, link, b_txt = get_ott_info(item['id'], m_type, title)
                 
                 st.markdown(f'''<div class="reco-card"><img src="{img}" class="card-img"><h4>{title[:22]}</h4><p style="color:#E50914; font-weight:bold; margin-top:-10px;">⭐ {rating} | {year}</p><a href="{link}" target="_blank" class="ott-btn">{b_txt}</a></div>''', unsafe_allow_html=True)
-                
                 if st.button(f"WATCH TRAILER", key=f"mv_{item['id']}_{i}"):
-                    trailer_key = get_tmdb_trailer(item['id'], m_type)
-                    if trailer_key:
-                        st.session_state.mv_vid = trailer_key
-                        st.rerun()
-                    else:
-                        st.warning("Trailer currently unavailable.")
+                    query = urllib.parse.quote(f"{title} official trailer {year}")
+                    res = urllib.request.urlopen(f"https://www.youtube.com/results?search_query={query}")
+                    st.session_state.mv_vid = re.findall(r'"videoId":"(.{11})"', res.read().decode())[0]
+                    st.rerun()
 
 elif menu == "🎵 Music Vibes":
     st.markdown("### 🎧 Discover Fresh Beats")
@@ -221,14 +223,11 @@ elif menu == "🎵 Music Vibes":
     with mc2: m_mood = st.selectbox("🎭 Mood", ["Party", "Romantic", "Sad", "Lo-Fi", "Workout"])
     with mc3: st.write(""); m_btn = st.button("Shuffle Music 🎵")
 
-    if m_search or m_btn:
-        q = m_search if m_search else f"{m_lang} {m_mood} hits 2026"
+    if m_search or m_btn or not st.session_state.music_res:
+        q = m_search if m_search else f"{m_lang} {m_mood} official audio 2026"
         music_data = fetch_yt_music(q)
-        if music_data:
-            random.shuffle(music_data)
-            st.session_state.music_res = music_data
-        else:
-            st.error("Music fetch fail! Please check your connection or update oauth.json.")
+        random.shuffle(music_data)
+        st.session_state.music_res = music_data
 
     if st.session_state.music_res:
         if 'ms_vid' not in st.session_state: st.session_state.ms_vid = None
